@@ -1,78 +1,193 @@
 #!/bin/bash
 # =====================================================================
-# macOS Pro-Cleanup & Maintenance
+# macOS Pro-Cleanup & Maintenance (v2.0)
 # Author: Arif
+# Description: Deep system cleaner targeting developer bloat.
+#              Supports --dry-run mode and per-section size reporting.
 # =====================================================================
 
-# --- Colors for UX ---
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+# --- Source shared helpers ---
+source "$(dirname "$0")/lib/common.sh"
 
-echo -e "${BLUE}🧹 Starting Deep System Cleanup...${NC}"
+# --- Help override ---
+_show_help() {
+    cat <<EOF
+Usage: $(basename "$0") [OPTIONS]
 
-# Helper function to get disk space in GB
+macOS Pro-Cleanup & Maintenance — safely reclaims disk space from
+developer caches, containers, and system caches.
+
+Options:
+  --dry-run   Preview what would be deleted without making changes
+  --help, -h  Show this help message
+
+Examples:
+  ./cleanup.sh              # Run full cleanup
+  ./cleanup.sh --dry-run    # Preview cleanup actions
+EOF
+}
+
+parse_common_args "$@"
+require_macos
+
+echo -e "${BLUE}${BOLD}🧹 Starting Deep System Cleanup...${NC}"
+
+# --- Disk space tracking ---
 get_free_space() {
     df -g / | awk 'NR==2 {print $4}'
 }
 
 BEFORE=$(get_free_space)
 
-# --- 🐳 UPGRADED DOCKER CLEANUP ---
-if command -v docker &> /dev/null && docker info &> /dev/null; then
-    echo -e "\n${YELLOW}🐳 Cleaning Docker...${NC}"
-    # Stop only if containers are running
-    RUNNING_COLS=$(docker ps -q)
-    if [ ! -z "$RUNNING_COLS" ]; then
-        docker stop $RUNNING_COLS
+# --- 🐳 DOCKER CLEANUP ---
+if command -v docker &> /dev/null && docker info &> /dev/null 2>&1; then
+    log_step "🐳 Cleaning Docker..."
+    # Stop running containers safely using an array
+    mapfile -t RUNNING_CONTAINERS < <(docker ps -q 2>/dev/null)
+    if [[ ${#RUNNING_CONTAINERS[@]} -gt 0 ]]; then
+        log_info "Stopping ${#RUNNING_CONTAINERS[@]} running container(s)..."
+        safe_exec docker stop "${RUNNING_CONTAINERS[@]}" 2>/dev/null || true
     fi
-    docker system prune -a --volumes -f
-    docker builder prune -a -f
+    safe_exec docker system prune -a --volumes -f 2>/dev/null || true
+    safe_exec docker builder prune -a -f 2>/dev/null || true
+    log_ok "Docker cleanup done."
 else
-    echo -e "\n${RED}⏩ Docker not running, skipping...${NC}"
+    log_info "Docker not running, skipping..."
 fi
 
-# --- 🐍 SMART PYTHON CLEANUP ---
-# Instead of uninstalling packages (risky), we clear the massive cache
-echo -e "\n${YELLOW}🐍 Cleaning Python & Pip...${NC}"
-python3 -m pip cache purge 2>/dev/null
-find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null
+# --- 🐍 PYTHON CLEANUP ---
+log_step "🐍 Cleaning Python & Pip caches..."
+safe_exec python3 -m pip cache purge 2>/dev/null || true
+# Search from $HOME with a depth limit instead of CWD
+if [[ "$DRY_RUN" == "true" ]]; then
+    PYCACHE_COUNT=$(find "$HOME" -maxdepth 6 -type d -name "__pycache__" 2>/dev/null | wc -l | tr -d ' ')
+    echo -e "  ${YELLOW}[DRY RUN]${NC} Would delete $PYCACHE_COUNT __pycache__ directories under \$HOME"
+else
+    find "$HOME" -maxdepth 6 -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+fi
+log_ok "Python caches cleared."
 
-# --- 🛠 DEVELOPER DEEP CLEAN (The real space savers) ---
-echo -e "\n${YELLOW}🛠 Cleaning Developer Bloat...${NC}"
+# --- 🛠 DEVELOPER DEEP CLEAN ---
+log_step "🛠 Cleaning Developer Bloat..."
 
-# Xcode Derived Data (Can grow to 40GB+)
-if [ -d "~/Library/Developer/Xcode/DerivedData" ]; then
-    rm -rf ~/Library/Developer/Xcode/DerivedData/*
-    echo "✅ Xcode DerivedData cleared."
+# Xcode DerivedData (Can grow to 40GB+) — fixed: use $HOME, not ~
+if [[ -d "$HOME/Library/Developer/Xcode/DerivedData" ]]; then
+    XCODE_SIZE=$(du -sh "$HOME/Library/Developer/Xcode/DerivedData" 2>/dev/null | awk '{print $1}')
+    log_info "Xcode DerivedData: ${XCODE_SIZE:-unknown}"
+    safe_rm "$HOME/Library/Developer/Xcode/DerivedData"/*
+    log_ok "Xcode DerivedData cleared."
+else
+    log_info "No Xcode DerivedData found, skipping."
 fi
 
-# NPM/Bun/Yarn Caches
-[ -d ~/.npm ] && npm cache clean --force &>/dev/null && echo "✅ NPM cache cleared."
-[ -d ~/.bun ] && rm -rf ~/.bun/install/cache && echo "✅ Bun cache cleared."
+# NPM cache
+if [[ -d "$HOME/.npm" ]] && command -v npm &> /dev/null; then
+    safe_exec npm cache clean --force &>/dev/null || true
+    log_ok "NPM cache cleared."
+fi
+
+# Bun cache
+if [[ -d "$HOME/.bun/install/cache" ]]; then
+    safe_rm "$HOME/.bun/install/cache"
+    log_ok "Bun cache cleared."
+fi
+
+# Yarn cache
+if [[ -d "$HOME/Library/Caches/Yarn" ]]; then
+    YARN_SIZE=$(du -sh "$HOME/Library/Caches/Yarn" 2>/dev/null | awk '{print $1}')
+    log_info "Yarn cache: ${YARN_SIZE:-unknown}"
+    safe_rm "$HOME/Library/Caches/Yarn"
+    log_ok "Yarn cache cleared."
+fi
+
+# CocoaPods cache
+if [[ -d "$HOME/Library/Caches/CocoaPods" ]]; then
+    COCOA_SIZE=$(du -sh "$HOME/Library/Caches/CocoaPods" 2>/dev/null | awk '{print $1}')
+    log_info "CocoaPods cache: ${COCOA_SIZE:-unknown}"
+    safe_rm "$HOME/Library/Caches/CocoaPods"
+    log_ok "CocoaPods cache cleared."
+fi
+
+# Gradle caches
+if [[ -d "$HOME/.gradle/caches" ]]; then
+    GRADLE_SIZE=$(du -sh "$HOME/.gradle/caches" 2>/dev/null | awk '{print $1}')
+    log_info "Gradle caches: ${GRADLE_SIZE:-unknown}"
+    safe_rm "$HOME/.gradle/caches"
+    log_ok "Gradle caches cleared."
+fi
+
+# Go module cache
+if [[ -d "$HOME/go/pkg/mod/cache" ]]; then
+    GO_SIZE=$(du -sh "$HOME/go/pkg/mod/cache" 2>/dev/null | awk '{print $1}')
+    log_info "Go module cache: ${GO_SIZE:-unknown}"
+    safe_rm "$HOME/go/pkg/mod/cache"
+    log_ok "Go module cache cleared."
+fi
+
+# Rust/Cargo registry cache
+if [[ -d "$HOME/.cargo/registry/cache" ]]; then
+    CARGO_SIZE=$(du -sh "$HOME/.cargo/registry/cache" 2>/dev/null | awk '{print $1}')
+    log_info "Cargo registry cache: ${CARGO_SIZE:-unknown}"
+    safe_rm "$HOME/.cargo/registry/cache"
+    log_ok "Cargo registry cache cleared."
+fi
+
+# pip wheel cache
+if [[ -d "$HOME/Library/Caches/pip" ]]; then
+    PIP_SIZE=$(du -sh "$HOME/Library/Caches/pip" 2>/dev/null | awk '{print $1}')
+    log_info "Pip wheel cache: ${PIP_SIZE:-unknown}"
+    safe_rm "$HOME/Library/Caches/pip"
+    log_ok "Pip cache cleared."
+fi
 
 # --- 🍺 HOMEBREW MAINTENANCE ---
 if command -v brew &> /dev/null; then
-    echo -e "\n${YELLOW}🍺 Homebrew Maintenance...${NC}"
-    brew cleanup -s
-    brew autoremove
+    log_step "🍺 Homebrew Maintenance..."
+    safe_exec brew cleanup -s 2>/dev/null || true
+    safe_exec brew autoremove 2>/dev/null || true
+    log_ok "Homebrew cleanup done."
 fi
 
-# --- 🧹 SYSTEM HYGIENE ---
-echo -e "\n${YELLOW}🧹 Flushing System Caches...${NC}"
-sudo rm -rf /Library/Caches/*
-# Note: Targeted delete for user caches to keep app settings safe
-find ~/Library/Caches -mindepth 1 -maxdepth 1 -not -name "com.apple.Safari" -exec rm -rf {} + 2>/dev/null
+# --- 🧹 SYSTEM CACHES ---
+log_step "🧹 Flushing System Caches..."
+
+# System-level caches — require confirmation
+if confirm_action "Clear /Library/Caches/* (requires sudo)?"; then
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo -e "  ${YELLOW}[DRY RUN]${NC} Would run: sudo rm -rf /Library/Caches/*"
+    else
+        sudo rm -rf /Library/Caches/* 2>/dev/null || true
+    fi
+    log_ok "System caches cleared."
+else
+    log_info "Skipped system cache cleanup."
+fi
+
+# User-level caches (keep Safari safe)
+if [[ "$DRY_RUN" == "true" ]]; then
+    USER_CACHE_COUNT=$(find "$HOME/Library/Caches" -mindepth 1 -maxdepth 1 -not -name "com.apple.Safari" 2>/dev/null | wc -l | tr -d ' ')
+    echo -e "  ${YELLOW}[DRY RUN]${NC} Would delete $USER_CACHE_COUNT items in ~/Library/Caches (preserving Safari)"
+else
+    find "$HOME/Library/Caches" -mindepth 1 -maxdepth 1 -not -name "com.apple.Safari" -exec rm -rf {} + 2>/dev/null || true
+fi
+log_ok "User caches cleared."
 
 # --- 📊 FINAL REPORT ---
 AFTER=$(get_free_space)
 RECLAIMED=$((AFTER - BEFORE))
 
+echo ""
 echo "=========================================="
-echo -e "${GREEN}✅ Cleanup Complete!${NC}"
+echo -e "${GREEN}${BOLD}✅ Cleanup Complete!${NC}"
+echo "=========================================="
 echo -e "Initial Space: ${BEFORE}GB"
 echo -e "Current Space: ${AFTER}GB"
-echo -e "${BLUE}Total Reclaimed: ${RECLAIMED}GB${NC}"
+if [[ "$RECLAIMED" -gt 0 ]]; then
+    echo -e "${GREEN}${BOLD}Total Reclaimed: ${RECLAIMED}GB${NC}"
+elif [[ "$RECLAIMED" -eq 0 ]]; then
+    echo -e "${BLUE}Total Reclaimed: <1GB (or dry-run mode)${NC}"
+else
+    echo -e "${YELLOW}Disk usage increased (background processes may have written data).${NC}"
+fi
 echo "=========================================="
+echo -e "${BLUE}📝 Full log: ${LOG_FILE}${NC}"

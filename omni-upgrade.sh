@@ -1,62 +1,136 @@
 #!/bin/bash
 # =====================================================================
-# macOS Omni-Upgrade Script
+# macOS Omni-Upgrade Script (v2.0)
 # Author: Arif
-# Description: One-click upgrade for Homebrew, MAS, Python, and macOS
+# Description: One-click global upgrade for Homebrew, MAS, Python, NPM,
+#              Bun, uv, and macOS — with change tracking.
 # =====================================================================
 
-# --- Colors ---
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+# --- Source shared helpers ---
+source "$(dirname "$0")/lib/common.sh"
 
-echo -e "${BLUE}🚀 Starting Global System Upgrade...${NC}"
+# --- Help override ---
+_show_help() {
+    cat <<EOF
+Usage: $(basename "$0") [OPTIONS]
+
+macOS Omni-Upgrade — one-click global upgrade utility for all your
+package managers and system software.
+
+Options:
+  --dry-run   Preview upgrade commands without executing them
+  --help, -h  Show this help message
+
+Sections:
+  Homebrew (formulae + casks), Mac App Store (via mas), Python/Pip,
+  NPM, Bun, uv, macOS Software Updates.
+EOF
+}
+
+parse_common_args "$@"
+require_macos
+
+echo -e "${BLUE}${BOLD}🚀 Starting Global System Upgrade...${NC}"
+
+# --- Temp files for change tracking ---
+BREW_BEFORE=$(mktemp /tmp/brew_before.XXXXXX) || true
+BREW_AFTER=$(mktemp /tmp/brew_after.XXXXXX) || true
+# Clean up temp files on exit
+trap 'rm -f "$BREW_BEFORE" "$BREW_AFTER"; _on_error ${LINENO:-0}' ERR
+trap 'rm -f "$BREW_BEFORE" "$BREW_AFTER"' EXIT
 
 # --- 1. HOMEBREW (Core & Casks) ---
 if command -v brew &> /dev/null; then
-    echo -e "\n${YELLOW}🍺 Upgrading Homebrew packages and Casks...${NC}"
-    brew update
-    brew upgrade
-    brew upgrade --cask --greedy # --greedy forces updates for apps that auto-update
+    log_step "🍺 Upgrading Homebrew packages and Casks..."
+    # Snapshot before
+    brew list --versions > "$BREW_BEFORE" 2>/dev/null || true
+    safe_exec brew update
+    safe_exec brew upgrade
+    safe_exec brew upgrade --cask --greedy  # --greedy forces updates for apps that auto-update
+    # Snapshot after
+    brew list --versions > "$BREW_AFTER" 2>/dev/null || true
+    log_ok "Homebrew upgrade done."
 else
-    echo -e "${RED}❌ Homebrew not found.${NC}"
+    log_err "Homebrew not found. Install from https://brew.sh/"
 fi
 
 # --- 2. MAC APP STORE (via MAS CLI) ---
-# Note: Requires 'mas' installed (brew install mas)
 if command -v mas &> /dev/null; then
-    echo -e "\n${YELLOW}🍎 Checking Mac App Store updates...${NC}"
-    mas upgrade
+    log_step "🍎 Checking Mac App Store updates..."
+    safe_exec mas upgrade
+    log_ok "App Store upgrade done."
 else
-    echo -e "${YELLOW}💡 Tip: Install 'mas' (brew install mas) to update App Store apps via script.${NC}"
+    log_info "Tip: Install 'mas' (brew install mas) to update App Store apps via script."
 fi
 
 # --- 3. PYTHON (Pip) ---
 if command -v pip3 &> /dev/null; then
-    echo -e "\n${YELLOW}🐍 Upgrading global Pip and core packages...${NC}"
-    python3 -m pip install --upgrade pip
-    # Optional: Upgrade all global packages (Use with caution)
-    # pip3 list --outdated --format=freeze | grep -v '^\-e' | cut -d = -f 1 | xargs -n1 pip3 install -U
+    log_step "🐍 Upgrading pip..."
+    safe_exec python3 -m pip install --upgrade pip 2>/dev/null || true
+    log_ok "Pip upgraded."
 fi
 
 # --- 4. NODE.JS / NPM ---
 if command -v npm &> /dev/null; then
-    echo -e "\n${YELLOW}📦 Upgrading NPM global packages...${NC}"
-    npm install -g npm@latest
-    # npm update -g # Optional: updates all global node modules
+    log_step "📦 Upgrading NPM..."
+    safe_exec npm install -g npm@latest 2>/dev/null || true
+    log_ok "NPM upgraded."
 fi
 
-# --- 5. macOS SYSTEM UPDATES ---
-echo -e "\n${YELLOW}💻 Checking for macOS Software Updates...${NC}"
-# -l lists updates, -i -a would install them (requires restart usually)
-softwareupdate -l
+# --- 5. BUN ---
+if command -v bun &> /dev/null; then
+    log_step "🧄 Upgrading Bun..."
+    safe_exec bun upgrade 2>/dev/null || true
+    log_ok "Bun upgraded."
+fi
 
-# --- 6. FINAL POST-UPGRADE CLEANUP ---
-echo -e "\n${BLUE}🧹 Running post-upgrade cleanup...${NC}"
-brew cleanup -s
+# --- 6. UV (Python) ---
+if command -v uv &> /dev/null; then
+    log_step "⚡ Upgrading uv..."
+    safe_exec uv self update 2>/dev/null || true
+    log_ok "uv upgraded."
+fi
 
-echo -e "\n${GREEN}==========================================${NC}"
-echo -e "${GREEN}✅ ALL SYSTEMS UP TO DATE${NC}"
-echo -e "${GREEN}==========================================${NC}"
+# --- 7. macOS SYSTEM UPDATES ---
+log_step "💻 Checking for macOS Software Updates..."
+# -l lists updates; -i -a would install them (requires restart usually)
+softwareupdate -l 2>/dev/null || log_warn "Could not check for macOS updates."
+
+# --- 8. POST-UPGRADE CLEANUP ---
+if command -v brew &> /dev/null; then
+    log_step "🧹 Running post-upgrade cleanup..."
+    safe_exec brew cleanup -s 2>/dev/null || true
+    log_ok "Homebrew cleanup done."
+fi
+
+# --- 📋 CHANGE REPORT ---
+echo ""
+echo "=========================================="
+echo -e "${BLUE}${BOLD}📋 UPGRADE CHANGE REPORT${NC}"
+echo "=========================================="
+
+if command -v brew &> /dev/null && [[ -s "$BREW_BEFORE" ]] && [[ -s "$BREW_AFTER" ]]; then
+    CHANGES=$(diff "$BREW_BEFORE" "$BREW_AFTER" 2>/dev/null | grep "^[<>]") || CHANGES=""
+    if [[ -n "$CHANGES" ]]; then
+        ADDED=$(echo "$CHANGES" | grep "^>" | sed 's/^> /  + /')
+        REMOVED=$(echo "$CHANGES" | grep "^<" | sed 's/^< /  - /')
+        if [[ -n "$REMOVED" ]]; then
+            echo -e "${RED}Removed/Old versions:${NC}"
+            echo "$REMOVED"
+        fi
+        if [[ -n "$ADDED" ]]; then
+            echo -e "${GREEN}Added/Updated versions:${NC}"
+            echo "$ADDED"
+        fi
+    else
+        echo "  No Homebrew package changes detected."
+    fi
+else
+    echo "  Homebrew not available or no snapshot taken."
+fi
+
+echo ""
+echo "=========================================="
+echo -e "${GREEN}${BOLD}✅ ALL SYSTEMS UP TO DATE${NC}"
+echo "=========================================="
+echo -e "${BLUE}📝 Full log: ${LOG_FILE}${NC}"
