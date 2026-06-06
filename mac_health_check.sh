@@ -104,9 +104,9 @@ else
 fi
 
 echo -e "\n${BOLD}Heavy Developer Caches:${NC}"
-DOCKER_SIZE=$(du -sh "$HOME/Library/Containers/com.docker.docker" 2>/dev/null | awk '{print $1}')
-OLLAMA_SIZE=$(du -sh "$HOME/.ollama/models" 2>/dev/null | awk '{print $1}')
-XCODE_SIZE=$(du -sh "$HOME/Library/Developer/Xcode/DerivedData" 2>/dev/null | awk '{print $1}')
+DOCKER_SIZE=$(du -sh "$HOME/Library/Containers/com.docker.docker" 2>/dev/null | awk '{print $1}' || true)
+OLLAMA_SIZE=$(du -sh "$HOME/.ollama/models" 2>/dev/null | awk '{print $1}' || true)
+XCODE_SIZE=$(du -sh "$HOME/Library/Developer/Xcode/DerivedData" 2>/dev/null | awk '{print $1}' || true)
 echo "  🐳 Docker Cache:      ${DOCKER_SIZE:-0B}"
 echo "  🦙 Ollama Models:     ${OLLAMA_SIZE:-0B}"
 echo "  🛠  Xcode DerivedData: ${XCODE_SIZE:-0B}"
@@ -145,10 +145,10 @@ fi
 
 # --- 🔋 BATTERY HEALTH ---
 echo -e "\n${BLUE}${BOLD}🔋 BATTERY STATUS${NC}"
-BATT_LEVEL=$(pmset -g batt 2>/dev/null | grep -o "[0-9]*%" | head -1)
-BATT_STATUS=$(pmset -g batt 2>/dev/null | grep -o "'.*'" | tr -d "'")
-BATT_HEALTH=$(system_profiler SPPowerDataType 2>/dev/null | grep "Maximum Capacity" | awk -F': ' '{print $2}')
-BATT_CYCLES=$(system_profiler SPPowerDataType 2>/dev/null | grep "Cycle Count" | awk -F': ' '{print $2}')
+BATT_LEVEL=$(pmset -g batt 2>/dev/null | grep -o "[0-9]*%" | head -1 || true)
+BATT_STATUS=$(pmset -g batt 2>/dev/null | grep -o "'.*'" | tr -d "'" || true)
+BATT_HEALTH=$(system_profiler SPPowerDataType 2>/dev/null | grep "Maximum Capacity" | awk -F': ' '{print $2}' || true)
+BATT_CYCLES=$(system_profiler SPPowerDataType 2>/dev/null | grep "Cycle Count" | awk -F': ' '{print $2}' || true)
 
 echo "Charge Level:   ${BATT_LEVEL:-N/A} (${BATT_STATUS:-Unknown})"
 echo "Maximum Health: ${BATT_HEALTH:-N/A}"
@@ -156,8 +156,8 @@ echo "Cycle Count:    ${BATT_CYCLES:-N/A}"
 
 # --- 🌡️ THERMAL STATUS ---
 echo -e "\n${BLUE}${BOLD}🌡️ THERMAL STATUS${NC}"
-THERMAL=$(pmset -g therm 2>/dev/null | grep "CPU_Scheduler_Limit" | awk '{print $3}')
-if [[ -n "$THERMAL" && "$THERMAL" -lt 100 ]] 2>/dev/null; then
+THERMAL=$(pmset -g therm 2>/dev/null | grep "CPU_Scheduler_Limit" | awk '{print $3}' || true)
+if [[ -n "$THERMAL" ]] && (( THERMAL < 100 )); then
     echo -e "${RED}⚠️  CPU throttled to ${THERMAL}% — thermal pressure detected${NC}"
 else
     echo -e "${GREEN}✅ No thermal throttling${NC}"
@@ -166,13 +166,13 @@ fi
 # --- 📊 TOP RESOURCE PROCESSES ---
 echo -e "\n${BLUE}${BOLD}📊 TOP RESOURCE CONSUMERS${NC}"
 echo -e "${BOLD}  Top CPU:${NC}"
-ps -Arco pid,pcpu,comm 2>/dev/null | head -4 | while IFS= read -r line; do echo "    $line"; done
+(ps -Arco pid,pcpu,comm 2>/dev/null | head -4 | while IFS= read -r line; do echo "    $line"; done) || true
 echo -e "${BOLD}  Top Memory:${NC}"
-ps -Amco pid,rss,comm 2>/dev/null | head -4 | while IFS= read -r line; do echo "    $line"; done
+(ps -Amco pid,rss,comm 2>/dev/null | head -4 | while IFS= read -r line; do echo "    $line"; done) || true
 
 # --- 🧾 RECENT ERRORS ---
 echo -e "\n${BLUE}${BOLD}🧾 RECENT CRITICAL LOGS (Last 10m)${NC}"
-CRITICAL_LOGS=$(log show --predicate 'eventMessage contains "fatal" OR eventMessage contains "panic"' --last 10m --level error 2>/dev/null | grep "eventMessage" | tail -n 3 | awk -F'] ' '{print "- " $2}') || CRITICAL_LOGS=""
+CRITICAL_LOGS=$(log show --predicate 'eventMessage contains "fatal" OR eventMessage contains "panic"' --last 10m --level error 2>/dev/null | grep "eventMessage" | tail -n 3 | awk -F'] ' '{print "- " $2}' || true)
 if [[ -z "$CRITICAL_LOGS" ]]; then
     echo -e "  ${GREEN}No critical system panics detected.${NC}"
 else
