@@ -40,10 +40,10 @@ get_free_space() {
 BEFORE=$(get_free_space)
 
 # --- 🐳 DOCKER CLEANUP ---
-if command -v docker &> /dev/null && docker info &> /dev/null 2>&1; then
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     log_step "🐳 Cleaning Docker..."
     # Stop running containers safely using an array
-    mapfile -t RUNNING_CONTAINERS < <(docker ps -q 2>/dev/null)
+    RUNNING_CONTAINERS=( $(docker ps -q 2>/dev/null || true) )
     if [[ ${#RUNNING_CONTAINERS[@]} -gt 0 ]]; then
         log_info "Stopping ${#RUNNING_CONTAINERS[@]} running container(s)..."
         safe_exec docker stop "${RUNNING_CONTAINERS[@]}" 2>/dev/null || true
@@ -81,8 +81,8 @@ else
 fi
 
 # NPM cache
-if [[ -d "$HOME/.npm" ]] && command -v npm &> /dev/null; then
-    safe_exec npm cache clean --force &>/dev/null || true
+if [[ -d "$HOME/.npm" ]] && command -v npm >/dev/null 2>&1; then
+    safe_exec npm cache clean --force 2>/dev/null || true
     log_ok "NPM cache cleared."
 fi
 
@@ -141,7 +141,7 @@ if [[ -d "$HOME/Library/Caches/pip" ]]; then
 fi
 
 # --- 🍺 HOMEBREW MAINTENANCE ---
-if command -v brew &> /dev/null; then
+if command -v brew >/dev/null 2>&1; then
     log_step "🍺 Homebrew Maintenance..."
     safe_exec brew cleanup -s 2>/dev/null || true
     safe_exec brew autoremove 2>/dev/null || true
