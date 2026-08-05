@@ -48,9 +48,12 @@ if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
         log_info "Stopping ${#RUNNING_CONTAINERS[@]} running container(s)..."
         safe_exec docker stop "${RUNNING_CONTAINERS[@]}" 2>/dev/null || true
     fi
-    safe_exec docker system prune -a --volumes -f 2>/dev/null || true
-    safe_exec docker builder prune -a -f 2>/dev/null || true
-    log_ok "Docker cleanup done."
+    # Only prune containers, networks, and volumes to preserve images
+    safe_exec docker container prune -f 2>/dev/null || true
+    safe_exec docker network prune -f 2>/dev/null || true
+    safe_exec docker volume prune -f 2>/dev/null || true
+    safe_exec docker builder prune -f 2>/dev/null || true
+    log_ok "Docker cleanup done (images preserved)."
 else
     log_info "Docker not running, skipping..."
 fi
@@ -140,6 +143,25 @@ if [[ -d "$HOME/Library/Caches/pip" ]]; then
     log_ok "Pip cache cleared."
 fi
 
+# pnpm cache
+if command -v pnpm >/dev/null 2>&1; then
+    safe_exec pnpm store prune 2>/dev/null || true
+    log_ok "pnpm store pruned."
+fi
+
+# Deno cache
+if command -v deno >/dev/null 2>&1; then
+    safe_exec rm -rf "$HOME/Library/Caches/deno" 2>/dev/null || true
+    log_ok "Deno cache cleared."
+fi
+
+# iOS Simulators (Unavailable)
+if command -v xcrun >/dev/null 2>&1; then
+    log_info "Cleaning unavailable iOS Simulators..."
+    safe_exec xcrun simctl delete unavailable 2>/dev/null || true
+    log_ok "iOS Simulators cleaned."
+fi
+
 # --- 🍺 HOMEBREW MAINTENANCE ---
 if command -v brew >/dev/null 2>&1; then
     log_step "🍺 Homebrew Maintenance..."
@@ -171,6 +193,19 @@ else
     find "$HOME/Library/Caches" -mindepth 1 -maxdepth 1 -not -name "com.apple.Safari" -exec rm -rf {} + 2>/dev/null || true
 fi
 log_ok "User caches cleared."
+
+# Empty Trash
+if confirm_action "Empty the Trash?"; then
+    if [[ "$DRY_RUN" == "true" ]]; then
+        TRASH_SIZE=$(du -sh "$HOME/.Trash" 2>/dev/null | awk '{print $1}')
+        echo -e "  ${YELLOW}[DRY RUN]${NC} Would empty Trash ($TRASH_SIZE)"
+    else
+        rm -rf "$HOME/.Trash"/* 2>/dev/null || true
+    fi
+    log_ok "Trash emptied."
+else
+    log_info "Skipped emptying Trash."
+fi
 
 # --- 📊 FINAL REPORT ---
 AFTER=$(get_free_space)
