@@ -194,7 +194,7 @@ if command -v ollama >/dev/null 2>&1 && ollama list >/dev/null 2>&1; then
     METRICS="Disk Usage: ${DISK_USAGE:-N/A}%, Memory Pressure: ${MEM_USED:-N/A}%, 1m Load Average: ${LOAD:-N/A}, Ping Latency: ${PING:-N/A}ms, DNS Latency: ${DNS_LATENCY:-N/A}ms, Battery Health: ${BATT_HEALTH:-N/A}, Thermal Throttle: ${THERMAL:-100}%, Docker Cache Size: ${DOCKER_SIZE:-0B}, Ollama Models Size: ${OLLAMA_SIZE:-0B}. Recent Errors: ${CRITICAL_LOGS:-None}."
 
     # Pass metrics and system prompt to Ollama
-    ollama run llama3.1:latest "Analyze these metrics: $METRICS. $SYSTEM_PROMPT" || log_warn "Ollama analysis failed."
+    ollama run llama3:latest "Analyze these metrics: $METRICS. $SYSTEM_PROMPT" || log_warn "Ollama analysis failed."
 
     echo "--------------------------------------------------------"
 else
